@@ -1,4 +1,4 @@
-"""Qwen3 non-thinking generation and bounded DART-Math answer judging."""
+"""Qwen3 path generation with explicit thinking extraction and math judging."""
 
 import contextlib
 import hashlib
@@ -104,13 +104,35 @@ class ShowcaseModelRunner:
                 contextlib.redirect_stderr(self.log_stream):
             output = self.model.generate(**inputs, **generation)
         output_ids = output[0, inputs.input_ids.shape[1]:].tolist()
-        think_end_present = QWEN3_THINK_END_TOKEN_ID in output_ids
+        think_end_indices = [
+            index for index, token_id in enumerate(output_ids)
+            if token_id == QWEN3_THINK_END_TOKEN_ID
+        ]
+        think_end_present = bool(think_end_indices)
         thinking, answer = _qwen3_split_thinking(output_ids, self.tokenizer)
-        if enable_thinking and not think_end_present:
+        raw_generated_text = self.tokenizer.decode(
+            output_ids, skip_special_tokens=False
+        )
+        if think_end_present:
+            split_index = think_end_indices[-1]
+            thinking_token_count = split_index
+            answer_token_count = len(output_ids) - split_index - 1
+            thinking_boundary_status = "complete"
+        elif enable_thinking:
+            # Altered layer paths can omit Qwen3's closing control token. Preserve
+            # the entire completion as an unseparated trace instead of silently
+            # presenting it as a cleanly extracted chain.
             thinking = self.tokenizer.decode(
                 output_ids, skip_special_tokens=True
             ).strip()
-            answer = ""
+            answer = thinking if "oxed{" in thinking else ""
+            thinking_token_count = len(output_ids)
+            answer_token_count = len(output_ids) if answer else 0
+            thinking_boundary_status = "missing_end_marker"
+        else:
+            thinking_token_count = 0
+            answer_token_count = len(output_ids)
+            thinking_boundary_status = "disabled"
         eos_ids = self.model.generation_config.eos_token_id
         if eos_ids is None:
             eos_ids = self.tokenizer.eos_token_id
@@ -121,8 +143,13 @@ class ShowcaseModelRunner:
             "thinking_enabled": bool(enable_thinking),
             "thinking_text": thinking.strip(),
             "answer_text": answer.strip(),
+            "raw_generated_text": raw_generated_text,
             "generated_token_count": len(output_ids),
+            "thinking_token_count": thinking_token_count,
+            "answer_token_count": answer_token_count,
             "think_end_present": think_end_present,
+            "think_end_count": len(think_end_indices),
+            "thinking_boundary_status": thinking_boundary_status,
             "ended_with_eos": ended_with_eos,
             "hit_token_limit": len(output_ids) >= max_new_tokens and not ended_with_eos,
         }

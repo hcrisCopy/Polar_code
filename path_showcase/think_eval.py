@@ -84,6 +84,15 @@ def _write_outputs(folder, difficulty, selected, state, elapsed_seconds):
             "nonthinking_correct": item["nonthinking_correct"],
             "thinking_outcome": outcome,
             "thinking_extracted_answer": extracted,
+            "thinking_boundary_status": (
+                "" if result is None else result["thinking_boundary_status"]
+            ),
+            "thinking_tokens": (
+                "" if result is None else result["thinking_token_count"]
+            ),
+            "answer_tokens": (
+                "" if result is None else result["answer_token_count"]
+            ),
             "generated_tokens": token_count,
             "hit_token_limit": hit_limit,
         })
@@ -115,19 +124,22 @@ def _write_outputs(folder, difficulty, selected, state, elapsed_seconds):
          f"正确 {counts['correct']}，错误 {counts['wrong']}，"
          f"截断 {counts['truncated']}，待评估 {counts['pending']}。"),
         "",
-        "| 图 | Pair | 非思考角色 | 候选 | Thinking 结果 | 抽取答案 | Tokens | 撞上限 |",
-        "| --- | ---: | --- | --- | --- | --- | ---: | --- |",
+        "| 图 | Pair | 非思考角色 | 候选 | Thinking 结果 | 抽取答案 | 思考 Tokens | 答案 Tokens | 边界 | 撞上限 |",
+        "| --- | ---: | --- | --- | --- | --- | ---: | ---: | --- | --- |",
     ]
     for row in table_rows:
         lines.append(
             f"| {cell(row['figure'])} | {row['pair']} | {row['role_nonthinking']} | "
             f"{cell(row['candidate_id'])} | {row['thinking_outcome']} | "
-            f"{cell(row['thinking_extracted_answer'])} | {row['generated_tokens']} | "
+            f"{cell(row['thinking_extracted_answer'])} | "
+            f"{row['thinking_tokens']} | {row['answer_tokens']} | "
+            f"{row['thinking_boundary_status']} | "
             f"{row['hit_token_limit']} |"
         )
     lines.extend([
         "",
         "`truncated` 表示生成达到 token 上限且尚未给出 boxed answer；该项不计为错误。",
+        "`missing_end_marker` 表示未生成 Qwen3 的 `</think>` 边界；完整原文保存在 state.json。",
     ])
     atomic_text(folder / "summary.md", "\n".join(lines) + "\n")
     return outcomes
