@@ -1,0 +1,5 @@
+-r ../requirements.txt
+# Additional local parquet reader; project dependency, not an author MCTS config.
+pyarrow==20.0.0
+# Reproducible vector figures for cross-task program analysis.
+matplotlib==3.10.5
