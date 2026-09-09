@@ -53,9 +53,21 @@ class ShowcaseModelRunner:
         torch.cuda.manual_seed(seed)
 
     def generate(self, question, sample_id, path):
+        details = self.generate_detailed(
+            question, sample_id, path,
+            enable_thinking=False,
+            max_new_tokens=self.args.max_new_tokens,
+        )
+        return details["answer_text"], bool(details["thinking_text"])
+
+    def generate_detailed(self, question, sample_id, path, *, enable_thinking,
+                          max_new_tokens):
+        """Generate once and retain completion diagnostics for controlled re-evaluation."""
         import torch
         from llm_depth_router.model import setup_custom_path
-        from polar.eval import _qwen3_apply_chat_template, _qwen3_split_thinking
+        from polar.eval import (QWEN3_THINK_END_TOKEN_ID,
+                                _qwen3_apply_chat_template,
+                                _qwen3_split_thinking)
 
         self._seed(sample_id, path)
         prompt = (
@@ -66,10 +78,25 @@ class ShowcaseModelRunner:
             "### Problem End\n"
             "Answer:"
         )
-        text = _qwen3_apply_chat_template(self.tokenizer, prompt)
+        if enable_thinking:
+            if not hasattr(self.tokenizer, "apply_chat_template"):
+                raise RuntimeError("Qwen3 thinking mode requires a tokenizer chat template")
+            try:
+                text = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=True,
+                )
+            except TypeError as exc:
+                raise RuntimeError(
+                    "Tokenizer does not support Qwen3 enable_thinking=True"
+                ) from exc
+        else:
+            text = _qwen3_apply_chat_template(self.tokenizer, prompt)
         inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
         setup_custom_path(self.model, path)
-        generation = {"max_new_tokens": self.args.max_new_tokens,
+        generation = {"max_new_tokens": max_new_tokens,
                       "do_sample": self.args.temperature > 0}
         if self.args.temperature > 0:
             generation["temperature"] = self.args.temperature
@@ -77,11 +104,28 @@ class ShowcaseModelRunner:
                 contextlib.redirect_stderr(self.log_stream):
             output = self.model.generate(**inputs, **generation)
         output_ids = output[0, inputs.input_ids.shape[1]:].tolist()
+        think_end_present = QWEN3_THINK_END_TOKEN_ID in output_ids
         thinking, answer = _qwen3_split_thinking(output_ids, self.tokenizer)
-        # Match the released evaluator: score content after </think> instead of
-        # failing the whole search. Altered layer paths can emit unexpected
-        # control tokens even when the normal chat template disables thinking.
-        return answer.strip(), bool(thinking)
+        if enable_thinking and not think_end_present:
+            thinking = self.tokenizer.decode(
+                output_ids, skip_special_tokens=True
+            ).strip()
+            answer = ""
+        eos_ids = self.model.generation_config.eos_token_id
+        if eos_ids is None:
+            eos_ids = self.tokenizer.eos_token_id
+        if not isinstance(eos_ids, (list, tuple, set)):
+            eos_ids = [eos_ids]
+        ended_with_eos = bool(output_ids and output_ids[-1] in set(eos_ids))
+        return {
+            "thinking_enabled": bool(enable_thinking),
+            "thinking_text": thinking.strip(),
+            "answer_text": answer.strip(),
+            "generated_token_count": len(output_ids),
+            "think_end_present": think_end_present,
+            "ended_with_eos": ended_with_eos,
+            "hit_token_limit": len(output_ids) >= max_new_tokens and not ended_with_eos,
+        }
 
     def judge(self, generated_text, ground_truth):
         """Run the same DART-Math extractor/equivalence logic with a hard timeout."""

@@ -4,13 +4,13 @@ import argparse
 import math
 from pathlib import Path
 
-from .storage import clean_run, relative_path
+from .storage import clean_run, clean_subdir, relative_path
 
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Fast Qwen3 path showcase")
     commands = parser.add_subparsers(dest="stage", required=True)
-    for name in ("prepare", "search", "report"):
+    for name in ("prepare", "search", "report", "think-eval"):
         command = commands.add_parser(name)
         command.add_argument("--run-name", required=True)
         if name == "prepare":
@@ -40,12 +40,26 @@ def build_parser():
             command.add_argument("--max-length-factor", type=float, required=True)
             command.add_argument("--max-new-tokens", type=int, required=True)
             command.add_argument("--temperature", type=float, required=True)
-        else:
+        elif name == "report":
             command.add_argument("--paths-per-label", type=int, required=True)
             command.add_argument(
                 "--difficulties", nargs="+", type=int, choices=range(1, 6),
                 help="Render only completed selected difficulties; omit for all five",
             )
+        else:
+            command.add_argument("--clean", action="store_true",
+                                 help="Clear only this difficulty's thinking outputs")
+            command.add_argument("--difficulty", type=int, required=True,
+                                 choices=range(1, 6))
+            command.add_argument("--model-id", required=True,
+                                 choices=["Qwen/Qwen3-8B"])
+            command.add_argument("--model-path", required=True)
+            command.add_argument("--model-revision", required=True)
+            command.add_argument("--device", type=int, required=True)
+            command.add_argument("--seed", type=int, required=True)
+            command.add_argument("--max-new-tokens", type=int, required=True)
+            command.add_argument("--temperature", type=float, required=True)
+            command.add_argument("--max-total-seconds", type=int, required=True)
     return parser
 
 
@@ -86,19 +100,32 @@ def validate(args):
             raise ValueError("paths-per-label must be positive")
         if args.difficulties is not None:
             args.difficulties = sorted(set(args.difficulties))
+    else:
+        relative_path(args.model_path)
+        if args.device < 0:
+            raise ValueError("device must be nonnegative")
+        if args.max_new_tokens <= 0 or args.max_total_seconds <= 0:
+            raise ValueError("Thinking evaluation limits must be positive")
+        if not math.isfinite(args.temperature) or args.temperature != 0:
+            raise ValueError("Thinking comparison requires deterministic temperature=0")
 
 
 def main():
     args = build_parser().parse_args()
     validate(args)
-    if getattr(args, "clean", False):
+    if getattr(args, "clean", False) and args.stage == "prepare":
         clean_run(args.run_name)
+    elif getattr(args, "clean", False) and args.stage == "think-eval":
+        clean_subdir(args.run_name, "thinking_eval", f"dm{args.difficulty}")
     if args.stage == "prepare":
         from .data import prepare_questions
         prepare_questions(args)
     elif args.stage == "search":
         from .search import run_search
         run_search(args)
-    else:
+    elif args.stage == "report":
         from .report import build_report
         build_report(args)
+    else:
+        from .think_eval import evaluate_selected_paths
+        evaluate_selected_paths(args)

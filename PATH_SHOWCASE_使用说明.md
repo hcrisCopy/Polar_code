@@ -83,6 +83,31 @@ python -B ./Polar_code/run_path_showcase.py report \
 
 旧版结果仍可用上述局部报告查看，但会排除不能由官方 `×2` 连续段语法表示的路径。正式重跑必须清理旧 run，因为搜索配置和报告结构已经改变。
 
+## 4. 对 DM-1 图中相同路径开启 Thinking 复评
+
+这一步不重新搜索，也不改变路径。它读取 `path_selections_dm1.json` 中两张图实际展示的 40 条不重复路径，使用同一模型、同一道题和同一判分器，只把 Qwen3 chat template 改为 `enable_thinking=True` 后逐条重新生成。
+
+Thinking 复评与原 non-thinking 搜索统一使用 `max-new-tokens=50`，保持相同生成预算。由于该上限同时包含思考过程和最终答案，若达到上限但还没有输出 boxed answer，结果记为 `truncated`，不误判为错误。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -B ./Polar_code/run_path_showcase.py think-eval \
+  --run-name qwen3_path_showcase \
+  --difficulty 1 \
+  --model-id Qwen/Qwen3-8B \
+  --model-path ./Polar_data/models/Qwen/Qwen3-8B \
+  --model-revision local-snapshot \
+  --device 0 \
+  --seed 42 \
+  --max-new-tokens 50 \
+  --temperature 0 \
+  --max-total-seconds 1200 \
+  --clean
+```
+
+输出：`./Polar_data/runs/qwen3_path_showcase/path_showcase/thinking_eval/dm1/`。`summary.md` 和 `comparison.csv` 给出每条路径从 non-thinking 到 thinking 的正确性变化；`state.json` 保留完整 thinking 文本、最终答案、token 数和截断状态；`figures/` 生成与原两张配对图相同布局的 PNG、SVG、PDF，并在每行标注 `Think=C/W/T/?`。
+
+每完成一条路径都会原子保存。意外中断后去掉 `--clean` 重跑即可续跑；再次使用 `--clean` 只清理 DM-1 的 thinking 复评产物，不删除 MCTS、原图或其他难度结果。
+
 ## 一键运行
 
 首次运行：

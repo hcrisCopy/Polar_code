@@ -41,6 +41,24 @@ def clean_run(run_name):
     shutil.rmtree(path)
 
 
+def clean_subdir(run_name, *names):
+    if not names or any(
+        not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", name)
+        for name in names
+    ):
+        raise ValueError("Unsafe output subdirectory name")
+    path = run_dir(run_name).joinpath(*names)
+    if not path.exists():
+        return
+    root = run_dir(run_name).resolve()
+    if not path.resolve().is_relative_to(root) or path.resolve() == root:
+        raise ValueError(f"Refusing unsafe cleanup: {path}")
+    for child in path.rglob("*"):
+        if child.is_symlink() or not child.resolve().is_relative_to(root):
+            raise ValueError(f"Refusing cleanup containing unsafe link: {child}")
+    shutil.rmtree(path)
+
+
 def digest(value):
     payload = json.dumps(value, sort_keys=True, ensure_ascii=True,
                          separators=(",", ":"), allow_nan=False)
@@ -78,4 +96,3 @@ def atomic_text(path, text):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(pending, path)
-

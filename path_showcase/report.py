@@ -224,7 +224,7 @@ def _figure_rows(pairs):
     return rows
 
 
-def _save_figure(path, pairs, depth, title):
+def _save_figure(path, pairs, depth, title, thinking_outcomes=None):
     plt = pyplot()
     from matplotlib.lines import Line2D
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch
@@ -344,12 +344,18 @@ def _save_figure(path, pairs, depth, title):
                 f"  edit={distance['execution_edit_distance']}"
                 f"  Δlen={distance['length_difference']}"
             )
+        if thinking_outcomes is not None:
+            label += f"  Think={thinking_outcomes.get(row['candidate_id'], '?')}"
         labels.append(label)
     axis.set_xticks(range(depth))
     axis.set_xticklabels(range(depth), fontsize=8)
     axis.set_yticks(row_positions)
     row_labels = axis.set_yticklabels(labels, fontsize=8)
-    axis.set_xlabel("Frozen pretrained layer index")
+    axis.set_xlabel(
+        "Frozen pretrained layer index"
+        + (" (Think: C=correct, W=wrong, T=truncated, ?=pending)"
+           if thinking_outcomes is not None else "")
+    )
     axis.set_title(title)
     for row_label, row in zip(row_labels, rows):
         row_label.set_color(correct_green if row["correct"] else wrong_red)
@@ -386,6 +392,25 @@ def _save_figure(path, pairs, depth, title):
             os.fsync(stream.fileno())
         os.replace(pending, target)
     plt.close(fig)
+
+
+def save_thinking_comparison(folder, difficulty, selection, depth, outcomes):
+    """Render the original paired paths annotated with thinking-mode outcomes."""
+    figure_dir = folder / "figures"
+    _save_figure(
+        figure_dir / f"dm{difficulty}_simplest_thinking.png",
+        selection["simplest_correct_with_nearest_wrong"],
+        depth,
+        f"DM-{difficulty}: simplest pairs re-evaluated with Qwen3 thinking",
+        thinking_outcomes=outcomes,
+    )
+    _save_figure(
+        figure_dir / f"dm{difficulty}_most_complex_thinking.png",
+        selection["most_complex_correct_with_nearest_wrong"],
+        depth,
+        f"DM-{difficulty}: most-complex pairs re-evaluated with Qwen3 thinking",
+        thinking_outcomes=outcomes,
+    )
 
 
 def build_report(args):
