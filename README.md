@@ -114,6 +114,7 @@ CUDA_VISIBLE_DEVICES=1 bash ./Polar_code/run_stage_one_pipeline.sh \
 
 正式的单卡、八卡、独立合并、数据验证和 predictor 训练命令见：
 
+- [前 10 条正确/错误路径快速展示](./PATH_SHOWCASE_使用说明.md)
 - [Stage One 使用说明](./STAGE_ONE_使用说明.md)
 - [跨难度固定路径分析说明](./ROBUST_SKIP_LOOP_分析说明.md)
 - [12 条固定路径五难度实验](./FIXED_12_PATHS_五难度说明.md)
