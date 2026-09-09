@@ -78,9 +78,10 @@ class ShowcaseModelRunner:
             output = self.model.generate(**inputs, **generation)
         output_ids = output[0, inputs.input_ids.shape[1]:].tolist()
         thinking, answer = _qwen3_split_thinking(output_ids, self.tokenizer)
-        if thinking:
-            raise RuntimeError("Qwen3 emitted a thinking trace despite enable_thinking=False")
-        return answer.strip()
+        # Match the released evaluator: score content after </think> instead of
+        # failing the whole search. Altered layer paths can emit unexpected
+        # control tokens even when the normal chat template disables thinking.
+        return answer.strip(), bool(thinking)
 
     def judge(self, generated_text, ground_truth):
         """Run the same DART-Math extractor/equivalence logic with a hard timeout."""

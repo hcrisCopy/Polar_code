@@ -96,7 +96,9 @@ def _search_question(row, question_state, args, config, runner, state, state_pat
             return float(cached["correct"])
 
         started = time.monotonic()
-        generated = runner.generate(row["question"], row["sample_id"], path)
+        generated, unexpected_thinking = runner.generate(
+            row["question"], row["sample_id"], path
+        )
         extracted, correct = runner.judge(generated, row["gt_ans"])
         item = {
             "candidate_id": f"mcts_{len(question_state['results']):04d}",
@@ -104,6 +106,7 @@ def _search_question(row, question_state, args, config, runner, state, state_pat
             "length": len(path),
             "path_digest": digest(path),
             "generated_text": generated,
+            "unexpected_thinking": unexpected_thinking,
             "extracted_answer": extracted,
             "correct": correct,
             "generation_seconds": time.monotonic() - started,

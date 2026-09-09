@@ -72,7 +72,7 @@ python -B ./Polar_code/run_path_showcase.py report \
   --difficulties 1
 ```
 
-这只读取一次原子保存的状态快照，不加载模型，也不会打断 MCTS。图片仍写入 `figures/dm1_*.png`；局部汇总使用 `summary_dm1.md`、`report_dm1.json`、`report_dm1.csv` 和 `path_selections_dm1.json`，不会覆盖最终五难度汇总。
+这只读取一次原子保存的状态快照，不加载模型，也不会打断 MCTS。局部报告基于当前已有结果：每类不足 10 条时有多少画多少，不足 20 条时允许“最简单”和“最复杂”集合重合，并在报告中给出重合数。图片仍写入 `figures/dm1_*.png`；局部汇总使用 `summary_dm1.md`、`report_dm1.json`、`report_dm1.csv` 和 `path_selections_dm1.json`，不会覆盖最终五难度汇总。
 
 ## 一键运行
 

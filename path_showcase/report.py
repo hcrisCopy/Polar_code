@@ -75,7 +75,8 @@ def build_report(args):
     state = read_json(folder / "search_state.json")
     if state["config_id"] != config["config_id"]:
         raise ValueError("Search state/config mismatch")
-    if config["target_per_label"] < 2 * args.paths_per_label:
+    partial = args.difficulties is not None
+    if not partial and config["target_per_label"] < 2 * args.paths_per_label:
         raise ValueError(
             "Distinct simplest/most-complex figures require target-per-label to be "
             "at least twice paths-per-label"
@@ -93,7 +94,7 @@ def build_report(args):
     selections = {}
     for key in tqdm(selected_difficulties, desc="Render path figures"):
         question_state = state["questions"][key]
-        if question_state["status"] != "quota_reached":
+        if not partial and question_state["status"] != "quota_reached":
             raise ValueError(
                 f"DM-{key} is not ready for visualization: "
                 f"status={question_state['status']}"
@@ -102,15 +103,15 @@ def build_report(args):
         correct_count = sum(row["correct"] for row in results)
         error_count = len(results) - correct_count
         required_count = 2 * args.paths_per_label
-        if min(correct_count, error_count) < required_count:
+        if not partial and min(correct_count, error_count) < required_count:
             raise ValueError(
                 f"DM-{key} has only {correct_count} correct and {error_count} wrong paths; "
                 f"need {required_count} of each to render disjoint extremes"
             )
         simple = _select(results, largest=False, count=args.paths_per_label)
         complex_rows = _select(results, largest=True, count=args.paths_per_label)
-        if not simple or not complex_rows:
-            raise ValueError(f"DM-{key} has no paths to visualize")
+        if not results:
+            raise ValueError(f"DM-{key} has no evaluated paths to visualize")
         figure_dir = folder / "figures"
         _save_figure(figure_dir / f"dm{key}_simplest.png", simple, config["depth"],
                      f"DM-{key}: simplest correct and wrong paths")
@@ -119,7 +120,7 @@ def build_report(args):
         simple_ids = {row["candidate_id"] for row in simple}
         complex_ids = {row["candidate_id"] for row in complex_rows}
         overlap = len(simple_ids & complex_ids)
-        if overlap:
+        if overlap and not partial:
             raise RuntimeError(
                 f"DM-{key} simplest and most-complex path sets unexpectedly overlap"
             )
@@ -139,13 +140,15 @@ def build_report(args):
                             "question": question_by_diff[key]["question"],
                             "ground_truth": question_by_diff[key]["gt_ans"]})
 
-    suffix = "" if args.difficulties is None else "_dm" + "-".join(selected_difficulties)
+    suffix = "" if not partial else "_dm" + "-".join(selected_difficulties)
     summary = {"schema_version": 1, "run_name": args.run_name,
                "reported_difficulties": [int(key) for key in selected_difficulties],
-               "partial_report": args.difficulties is not None,
+               "partial_report": partial,
                "complexity_metric": "execution path length",
                "paths_per_label_per_figure": args.paths_per_label,
-               "simplest_and_most_complex_sets_disjoint": True,
+               "simplest_and_most_complex_sets_disjoint": all(
+                   row["simple_complex_overlap"] == 0 for row in report_rows
+               ),
                "questions": report_rows}
     atomic_json(folder / f"report{suffix}.json", summary)
     atomic_json(folder / f"path_selections{suffix}.json", selections)
@@ -166,7 +169,16 @@ def build_report(args):
     for row in report_rows:
         lines.append(f"| DM-{row['difficulty']} | {row['evaluated']} | {row['correct']} | "
                      f"{row['wrong']} | {row['status']} | {row['simple_complex_overlap']} |")
-    lines.extend(["", "每类至少收集 20 条；最简单 10 条与最复杂 10 条严格不重合。"])
+    if partial:
+        lines.extend([
+            "",
+            "这是基于当前已评估路径生成的阶段性快照；每类不足 10 条时有多少画多少，"
+            "不足 20 条时最简单与最复杂集合允许重合。",
+        ])
+    else:
+        lines.extend([
+            "", "每类至少收集 20 条；最简单 10 条与最复杂 10 条严格不重合。"
+        ])
     summary_path = folder / f"summary{suffix}.md"
     atomic_text(summary_path, "\n".join(lines) + "\n")
     print(f"Report written to {summary_path}")
