@@ -409,7 +409,7 @@ def _plot_search_trajectories(folder, run_name, maximum_questions, maximum_paths
                                vmin=0, vmax=max(2, float(features.max())), cmap="cividis")
         axes[0].set_xlabel("Original layer index")
         axes[0].set_ylabel("MCTS evaluation order")
-        axes[0].set_title("Explored program execution counts (0=skip, 2+=loop)")
+        axes[0].set_title("Explored program execution counts (0=skip, 2=loop)")
         fig.colorbar(image, ax=axes[0], label="Execution count")
         axes[1].imshow(rewards[:, None], aspect="auto", interpolation="nearest",
                        vmin=0, vmax=1, cmap=ListedColormap([SKIP_COLOR, LOOP_COLOR]))
@@ -709,7 +709,7 @@ def report_representations(args):
         "- `search_trajectory_*`: Actual MCTS evaluation order. Point color is binary reward; "
         "the connecting line is temporal order, not a stored parent-child tree edge.",
         "- `search_path_matrix_*`: Original-layer execution counts for every evaluated path "
-        "in temporal order; 0 means skip and values of 2 or more mean loop/re-execution.",
+        "in temporal order; 0 means skip and 2 means one 2x loop/re-execution.",
         "- `residual_alignment_heatmap`: Mutual k-NN overlap between each program execution "
         "slot and the full-depth program's final residual geometry over corresponding questions.",
         "- `layer_alignment_<program_id>`: Full mutual-kNN matrix between the program's "

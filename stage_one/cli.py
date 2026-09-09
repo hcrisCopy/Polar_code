@@ -46,7 +46,8 @@ def parser():
             sub.add_argument("--exploration", type=float, required=True)
             sub.add_argument("--length-penalty", type=float, required=True)
             sub.add_argument("--max-block", type=int, required=True, choices=range(1, 5))
-            sub.add_argument("--max-repeats", type=int, required=True, choices=range(1, 5))
+            sub.add_argument("--max-repeats", type=int, required=True, choices=[1],
+                             help="One additional copy: every loop segment executes exactly 2x")
             sub.add_argument("--max-length-factor", type=float, required=True)
             sub.add_argument("--max-new-tokens", type=int, required=True)
             sub.add_argument("--temperature", type=float, required=True)

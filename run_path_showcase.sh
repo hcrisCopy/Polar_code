@@ -26,11 +26,11 @@ python -B ./Polar_code/run_path_showcase.py search \
   --exploration 1.4142135623730951 \
   --length-penalty 0.1 \
   --max-block 4 \
-  --max-repeats 4 \
+  --max-repeats 1 \
+  --paths-per-figure 10 \
   --max-length-factor 1.15 \
   --max-new-tokens 50 \
   --temperature 0
 
-python -B ./Polar_code/run_path_showcase.py report \
-  --run-name "${RUN_NAME}" \
-  --paths-per-label 10
+# Search renders each completed difficulty immediately. Run the standalone
+# report command later only when a combined final summary is needed.

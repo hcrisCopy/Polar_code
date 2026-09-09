@@ -72,7 +72,7 @@ python -B ./Polar_code/run_stage_one.py prepare --run-name mcts_formal --data-pa
 
 ```bash
 mkdir -p ./Polar_data/runtime/launcher
-TMPDIR=./Polar_data/runtime/launcher PYTHONDONTWRITEBYTECODE=1 torchrun --standalone --nproc_per_node=1 ./Polar_code/run_stage_one.py search --run-name mcts_formal --model-id meta-llama/Llama-3.2-3B-Instruct --model-path ./Polar_data/models/meta-llama/Llama-3.2-3B-Instruct --model-revision local-snapshot --seed 42 --simulations 1024 --exploration 1.4142135623730951 --length-penalty 0.1 --max-block 4 --max-repeats 4 --max-length-factor 1.15 --max-new-tokens 50 --temperature 0 --completion-timeout 604800
+TMPDIR=./Polar_data/runtime/launcher PYTHONDONTWRITEBYTECODE=1 torchrun --standalone --nproc_per_node=1 ./Polar_code/run_stage_one.py search --run-name mcts_formal --model-id meta-llama/Llama-3.2-3B-Instruct --model-path ./Polar_data/models/meta-llama/Llama-3.2-3B-Instruct --model-revision local-snapshot --seed 42 --simulations 1024 --exploration 1.4142135623730951 --length-penalty 0.1 --max-block 4 --max-repeats 1 --max-length-factor 1.15 --max-new-tokens 50 --temperature 0 --completion-timeout 604800
 ```
 
 输出：`./Polar_data/runs/mcts_formal/search/`，结束后 rank 0 自动合并到 `merged/` 并验证到 `validation/`。
@@ -83,7 +83,7 @@ TMPDIR=./Polar_data/runtime/launcher PYTHONDONTWRITEBYTECODE=1 torchrun --standa
 
 ```bash
 mkdir -p ./Polar_data/runtime/launcher
-TMPDIR=./Polar_data/runtime/launcher PYTHONDONTWRITEBYTECODE=1 torchrun --standalone --nproc_per_node=8 ./Polar_code/run_stage_one.py search --run-name mcts_formal --model-id meta-llama/Llama-3.2-3B-Instruct --model-path ./Polar_data/models/meta-llama/Llama-3.2-3B-Instruct --model-revision local-snapshot --seed 42 --simulations 1024 --exploration 1.4142135623730951 --length-penalty 0.1 --max-block 4 --max-repeats 4 --max-length-factor 1.15 --max-new-tokens 50 --temperature 0 --completion-timeout 604800
+TMPDIR=./Polar_data/runtime/launcher PYTHONDONTWRITEBYTECODE=1 torchrun --standalone --nproc_per_node=8 ./Polar_code/run_stage_one.py search --run-name mcts_formal --model-id meta-llama/Llama-3.2-3B-Instruct --model-path ./Polar_data/models/meta-llama/Llama-3.2-3B-Instruct --model-revision local-snapshot --seed 42 --simulations 1024 --exploration 1.4142135623730951 --length-penalty 0.1 --max-block 4 --max-repeats 1 --max-length-factor 1.15 --max-new-tokens 50 --temperature 0 --completion-timeout 604800
 ```
 
 输出同上，逐 rank 数据在 `search/rank_00000/` 至 `search/rank_00007/`。`global_index % world_size` 分片，逐题随机种子不依赖 rank；不使用 DDP。rank 0 等到本次运行的全部完成标识才合并。没有搜索结束 barrier；异常由 torchrun 终止其他进程，缺失完成标识另有显式超时。
@@ -122,7 +122,7 @@ python -B ./Polar_code/train_stage_one_predictor.py --run-name mcts_formal --pre
 | --- | --- | --- |
 | 状态/根节点 | 完整可执行路径；根为 `[0,...,D-1]` | 附录 B.3/B.4 |
 | 动作 | 删除或重复当前程序中的连续位置块；重复数指额外拷贝数 | 附录 B.2；额外拷贝的约定与官方 `actions_to_path` 一致 |
-| 块长、额外重复次数上限 | `--max-block 4 --max-repeats 4` | 附录 B.2 的上界；均可调小，不自动改变 |
+| 连续段长、额外重复次数 | `--max-block 4 --max-repeats 1` | 原项目解析器每段最多 4 层；loop 仅额外复制一次，即整体执行 `×2` |
 | reward | 实际生成结果的二值正确性 | 附录 B.3；直接调用官方 `_online_eval_math_single`，复用其 boxed 门槛、chat template、DART-Math 抽取和数学等价判断 |
 | UCB | `R/v + c*sqrt(log(V)/v) - lambda*len(path)/D` | 附录 B.3；V 取根访问次数 |
 | 搜索次数 | `--simulations 1024`，另加完整路径基线一次 | **本项目默认值，可调整；作者未公开** |
@@ -136,7 +136,7 @@ python -B ./Polar_code/train_stage_one_predictor.py --run-name mcts_formal --pre
 
 每次从未扩展动作中按题种子随机选一个子节点，执行该完整程序；相同程序只执行一次并复用实际 reward，树节点分别累计访问统计，排除祖先循环。这些是论文未细化的工程选择。没有额外 rollout 深度、早停正例数或隐藏的候选数截断。
 
-官方 predictor 只能表达连续原始层段、段长最多 4、每段最多额外执行一次。因此搜索保留附录的较宽空间，**只把官方解析器成功解析的路径写入 final_valid/invalid_transitions**，其余真实执行记录保存在 `evaluations`，不静默丢弃。每题同时保存 `question`、`gt_ans`、`initial_score`、搜索统计和失败原因。测试题只评估完整路径。额外字段被官方加载器忽略。
+官方 predictor 只能表达连续原始层段、段长最多 4、每段最多额外执行一次。因此 MCTS 在扩展时就过滤候选，只执行官方解析器能够表示的 skip/keep/loop 路径；loop 段固定整体执行 `×2`，不会产生 `×3/×4`。每题同时保存 `question`、`gt_ans`、`initial_score`、搜索统计和失败原因。测试题只评估完整路径。额外字段被官方加载器忽略。
 
 缓存适配只作用于新增 ModelRunner 实例：原路由按 custom_path 执行，新增 DynamicCache 按执行位置存 KV，防止 repeat 共用同一原始层缓存；不修改原文件、原 attention 的 layer_idx、生成参数或模型模式。实现依据是仓库补丁及 [Transformers 4.52.4 的 KV 更新接口](https://github.com/huggingface/transformers/blob/v4.52.4/src/transformers/cache_utils.py)。服务器首次小规模运行仍需确认真实生成兼容性；本机没有运行验证。原 `polar/eval.py` 的独立调用没有安装此实例适配，后续用它评估 repeat 路径前需要另行对齐缓存语义。
 

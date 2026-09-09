@@ -36,6 +36,7 @@ def build_parser():
             command.add_argument("--length-penalty", type=float, required=True)
             command.add_argument("--max-block", type=int, required=True)
             command.add_argument("--max-repeats", type=int, required=True)
+            command.add_argument("--paths-per-figure", type=int, required=True)
             command.add_argument("--max-length-factor", type=float, required=True)
             command.add_argument("--max-new-tokens", type=int, required=True)
             command.add_argument("--temperature", type=float, required=True)
@@ -62,8 +63,16 @@ def validate(args):
             raise ValueError("Search limits must be positive")
         if args.simulations < args.check_interval:
             raise ValueError("simulations must be at least check-interval")
-        if args.max_block > 4 or args.max_repeats > 4:
-            raise ValueError("Paper search constraints require max-block/max-repeats <= 4")
+        if args.max_block > 4:
+            raise ValueError("Official path segments contain at most four layers")
+        if args.max_repeats != 1:
+            raise ValueError("Official loop segments execute exactly twice; use max-repeats=1")
+        if args.paths_per_figure <= 0:
+            raise ValueError("paths-per-figure must be positive")
+        if args.target_per_label < 2 * args.paths_per_figure:
+            raise ValueError(
+                "target-per-label must be at least twice paths-per-figure"
+            )
         if any(not math.isfinite(value) or value < 0 for value in
                (args.exploration, args.length_penalty)):
             raise ValueError("MCTS coefficients must be finite and nonnegative")

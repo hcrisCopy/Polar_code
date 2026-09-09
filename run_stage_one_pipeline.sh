@@ -54,7 +54,7 @@ fi
 python -B ./Polar_code/run_stage_one.py environment --run-name "$run" --model-path "$model" --data-path "$data" "${clean[@]}"
 python -B ./Polar_code/run_stage_one.py prepare --run-name "$run" --data-path "$data" --data-source hkust-nlp/dart-math-pool-math --source-revision "$source_revision" --difficulties "${difficulty_args[@]}" --seed 42 --split-policy proportional --train-fraction 0.625 --validation-fraction 0.125 --max-questions-per-diff "$limit" "${clean[@]}"
 # Every scientific/search option is visible here; these are project defaults.
-torchrun --standalone --nproc_per_node="$nproc" ./Polar_code/run_stage_one.py search --run-name "$run" --model-id "$model_id" --model-path "$model" --model-revision "$model_revision" --seed 42 --simulations 1024 --exploration 1.4142135623730951 --length-penalty 0.1 --max-block 4 --max-repeats 4 --max-length-factor 1.15 --max-new-tokens 50 --temperature 0 --completion-timeout 604800 "${clean[@]}"
+torchrun --standalone --nproc_per_node="$nproc" ./Polar_code/run_stage_one.py search --run-name "$run" --model-id "$model_id" --model-path "$model" --model-revision "$model_revision" --seed 42 --simulations 1024 --exploration 1.4142135623730951 --length-penalty 0.1 --max-block 4 --max-repeats 1 --max-length-factor 1.15 --max-new-tokens 50 --temperature 0 --completion-timeout 604800 "${clean[@]}"
 python -B ./Polar_code/run_stage_one.py merge --run-name "$run" "${clean[@]}"
 python -B ./Polar_code/run_stage_one.py validate --run-name "$run" "${clean[@]}"
 if [[ "$train_predictor" == true ]]; then

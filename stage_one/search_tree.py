@@ -1,6 +1,8 @@
 """Appendix B: complete-program edit MCTS, not next-layer token prediction."""
 
+from collections import Counter
 from dataclasses import dataclass, field
+from functools import lru_cache
 import math
 import random
 
@@ -16,30 +18,52 @@ class Node:
     unexpanded: list | None = None
 
 
-def edits(path, *, max_block, max_repeats, max_length):
+def official_path_filter(depth, max_pack=4):
+    """Build a cached predicate for the released skip/keep/2x-loop grammar."""
+    from polar.data import parse_path_to_seg_and_ops
+
+    @lru_cache(maxsize=None)
+    def accepts(path):
+        if (not path or any(type(layer) is not int or layer < 0 or layer >= depth
+                            for layer in path)):
+            return False
+        counts = Counter(path)
+        if any(count > 2 for count in counts.values()):
+            return False
+        return parse_path_to_seg_and_ops(
+            list(path), depth, max_pack=max_pack, allow_repeat=True
+        ) is not None
+
+    return accepts
+
+
+def edits(path, *, max_block, max_repeats, max_length, path_filter=None):
     """Edit contiguous positions in the current program (Appendix B.2).
 
-    Repeat count denotes additional copies. No representability filter here:
-    the diagnostic search space is broader than the released predictor grammar.
+    Repeat count denotes additional copies. ``path_filter`` can constrain the
+    expanded states to the released predictor grammar without changing legacy
+    callers that intentionally explore a broader diagnostic space.
     """
     candidates = set()
     for start in range(len(path)):
         for size in range(1, min(max_block, len(path) - start) + 1):
             end = start + size
             shortened = path[:start] + path[end:]
-            if shortened:
+            if shortened and (path_filter is None or path_filter(shortened)):
                 candidates.add(shortened)
             for count in range(1, max_repeats + 1):
                 if len(path) + size * count > max_length:
                     break
-                candidates.add(path[:end] + path[start:end] * count + path[end:])
+                repeated = path[:end] + path[start:end] * count + path[end:]
+                if path_filter is None or path_filter(repeated):
+                    candidates.add(repeated)
     candidates.discard(path)
     return sorted(candidates)
 
 
 def search(evaluate, *, depth, simulations, exploration, length_penalty,
            max_block, max_repeats, max_length, seed, rank, on_evaluation,
-           should_stop=None):
+           should_stop=None, path_filter=None):
     """Evaluate each unique program once; backpropagate binary reward only.
 
     Revisited states use their actual recorded reward. Ancestor states are
@@ -79,6 +103,7 @@ def search(evaluate, *, depth, simulations, exploration, length_penalty,
                         max_block=max_block,
                         max_repeats=max_repeats,
                         max_length=max_length,
+                        path_filter=path_filter,
                     )
                     if candidate not in ancestors
                 ]

@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from .model_runner import ModelRunner, model_inventory
 from .prepare import check_manifest
-from .search_tree import search
+from .search_tree import official_path_filter, search
 from .storage import (atomic_json, clean_stage, digest, file_digest, output_path,
                       read_json, recover_pending, run_lock, stage_dir)
 from .validate import summarize, verify_record
@@ -37,7 +37,8 @@ def build_config(args, manifest, world):
         raise ValueError("Local model config does not match model-id depth")
     # Hash weight/config/tokenizer bytes without deserializing any tensors.
     source_files = sorted(Path("Polar_code").rglob("*.py"))
-    config = {"schema_version": 1, "args": options, "world_size": world,
+    config = {"schema_version": 2, "args": options, "world_size": world,
+              "path_grammar": "contiguous skip/keep/loop segments; loop executes exactly 2x",
               "depth": depth, "max_length": int(depth * args.max_length_factor),
               "manifest_id": manifest["manifest_id"],
               "model_files": model_inventory(args.model_path),
@@ -66,6 +67,7 @@ def process_question(row, args, config, runner, rank):
     from polar.data import parse_path_to_seg_and_ops
     record = make_record(row, config)
     start = time.monotonic()
+    official_path = official_path_filter(config["depth"], max_pack=4)
 
     def remember(path, score):
         record["evaluations"].append({"path": list(path), "score": score})
@@ -88,7 +90,8 @@ def process_question(row, args, config, runner, rank):
                            simulations=args.simulations, exploration=args.exploration,
                            length_penalty=args.length_penalty, max_block=args.max_block,
                            max_repeats=args.max_repeats, max_length=config["max_length"],
-                           seed=sample_seed, rank=rank, on_evaluation=remember)
+                           seed=sample_seed, rank=rank, on_evaluation=remember,
+                           path_filter=official_path)
         record["search_statistics"] = stats
         record["status"] = "complete"
         if not record["final_valid_transitions"]:

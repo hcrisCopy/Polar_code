@@ -2,11 +2,12 @@
 
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 from tqdm import tqdm
 
 from polar.config import infer_original_depth
-from stage_one.search_tree import search as mcts_search
+from stage_one.search_tree import official_path_filter, search as mcts_search
 from stage_one.storage import file_digest
 
 from .model_runner import ShowcaseModelRunner
@@ -50,8 +51,10 @@ def _config(args, manifest):
     if local_config.get("quantization_config"):
         raise ValueError("This checkpoint requires the full, unquantized model")
     return {
-        "schema_version": 2,
+        "schema_version": 5,
         "search_method": "stage_one MCTS",
+        "path_grammar": "contiguous skip/keep/loop segments; loop executes exactly 2x",
+        "search_layer_scope": "all original layers",
         "model_id": args.model_id,
         "model_path": args.model_path,
         "model_revision": args.model_revision,
@@ -66,6 +69,7 @@ def _config(args, manifest):
         "length_penalty": args.length_penalty,
         "max_block": args.max_block,
         "max_repeats": args.max_repeats,
+        "paths_per_figure": args.paths_per_figure,
         "max_length_factor": args.max_length_factor,
         "max_new_tokens": args.max_new_tokens,
         "temperature": args.temperature,
@@ -145,6 +149,8 @@ def _search_question(row, question_state, args, config, runner, state, state_pat
         return reached
 
     sample_seed = int(digest([args.seed, row["sample_id"]])[:16], 16)
+    official_path = official_path_filter(config["depth"], max_pack=4)
+
     statistics = mcts_search(
         evaluate,
         depth=config["depth"],
@@ -158,6 +164,7 @@ def _search_question(row, question_state, args, config, runner, state, state_pat
         rank=0,
         on_evaluation=lambda path, reward: None,
         should_stop=should_stop,
+        path_filter=official_path,
     )
     question_state["search_statistics"] = statistics
     correct_count, error_count = _counts(question_state["results"])
@@ -167,6 +174,40 @@ def _search_question(row, question_state, args, config, runner, state, state_pat
     )
     question_state["baseline_correct"] = result_by_path[baseline]["correct"]
     atomic_json(state_path, state)
+
+
+def _render_completed_difficulty(run_name, difficulty, paths_per_figure):
+    """Render immediately after a question finishes without risking later search."""
+    from .report import build_report
+
+    folder = run_dir(run_name)
+    status_path = folder / f"visualization_status_dm{difficulty}.json"
+    try:
+        summary = build_report(SimpleNamespace(
+            run_name=run_name,
+            paths_per_label=paths_per_figure,
+            difficulties=[difficulty],
+        ))
+        rendered_pairs = summary["questions"][0]["pairs_per_figure"]
+        render_status = (
+            "complete" if rendered_pairs == paths_per_figure
+            else "partial" if rendered_pairs else "insufficient_paths"
+        )
+        atomic_json(status_path, {
+            "status": render_status,
+            "difficulty": difficulty,
+            "pairs_per_figure": rendered_pairs,
+        })
+        print(
+            f"DM-{difficulty}: paired visualization status={render_status}, "
+            f"pairs_per_figure={rendered_pairs}"
+        )
+    except Exception as exc:
+        failure = f"{type(exc).__name__}: {exc}"
+        atomic_json(status_path, {
+            "status": "failed", "difficulty": difficulty, "error": failure,
+        })
+        print(f"DM-{difficulty}: visualization failed but search will continue: {failure}")
 
 
 def run_search(args):
@@ -206,12 +247,14 @@ def run_search(args):
             atomic_json(folder / "model_runtime.json", runner.metadata())
             for row in tqdm(manifest["questions"], desc="Difficulty questions"):
                 question_state = state["questions"][str(row["difficulty"])]
-                if question_state["status"] in {
+                if question_state["status"] not in {
                     "quota_reached", "simulation_limit_reached", "time_limit_reached"
                 }:
-                    continue
-                _search_question(
-                    row, question_state, args, config, runner, state, state_path
+                    _search_question(
+                        row, question_state, args, config, runner, state, state_path
+                    )
+                _render_completed_difficulty(
+                    args.run_name, row["difficulty"], args.paths_per_figure
                 )
         finally:
             runner.close()

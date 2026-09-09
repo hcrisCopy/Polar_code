@@ -57,7 +57,7 @@ python -B ./Polar_code/run_stage_one.py report-representations --run-name mcts_f
 重点输出：
 
 - `search_trajectory_<sample_id>.svg/pdf`：MCTS 实际评估顺序、路径长度和结构 PCA。旧结果没有父节点字段，因此连线表示时间顺序，不表示树边。
-- `search_path_matrix_<sample_id>.svg/pdf`：每条已评估路径在各原始层上的执行次数；0 是 skip，1 是正常执行，2 及以上是 loop/重复执行，右侧窄列为该路径的 0/1 reward。
+- `search_path_matrix_<sample_id>.svg/pdf`：每条已评估路径在各原始层上的执行次数；0 是 skip，1 是正常执行，2 是所属连续层段整体 loop `×2`，右侧窄列为该路径的 0/1 reward。
 - `residual_alignment_heatmap.svg/pdf`：各程序每个执行槽位相对 baseline 最终 residual 几何的 mNN。
 - `layer_alignment_<program_id>.svg/pdf`：某个程序的所有执行槽位与 baseline 所有槽位之间的完整 mNN 矩阵，可观察 loop 后的 residual 在 baseline 深度轴上更接近哪里。
 - `final_geometry_alignment.svg/pdf`：最终 residual 的 mNN 和 linear CKA。
