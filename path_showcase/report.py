@@ -3,7 +3,6 @@
 import csv
 import os
 
-from matplotlib.colors import ListedColormap
 import numpy as np
 from tqdm import tqdm
 
@@ -35,36 +34,111 @@ def _execution_counts(path, depth):
 
 def _save_figure(path, rows, depth, title):
     plt = pyplot()
-    matrix = np.stack([np.clip(_execution_counts(row["path"], depth), 0, 2)
-                       for row in rows])
-    fig, axis = plt.subplots(figsize=(11.5, max(4.2, 0.34 * len(rows) + 1.6)),
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import FancyBboxPatch, Patch
+
+    navy = "#062A3A"
+    arrow_blue = "#176B8A"
+    input_blue = "#58C3E7"
+    output_orange = "#F4A77D"
+    recurrent_green = "#D8F0CD"
+    skipped_gray = "#8A8A8A"
+    correct_green = "#00875A"
+    wrong_red = "#C43C39"
+
+    fig, axis = plt.subplots(figsize=(14.5, max(4.8, 0.44 * len(rows) + 2.0)),
                              constrained_layout=True)
-    cmap = ListedColormap(["#E6E6E6", "#56B4E9", "#D55E00"])
-    axis.imshow(matrix, aspect="auto", interpolation="nearest", cmap=cmap,
-                vmin=-0.5, vmax=2.5)
+    row_positions = list(reversed(range(len(rows))))
+    cell_width = 0.72
+    cell_height = 0.56
+    for y, row in zip(row_positions, rows):
+        counts = _execution_counts(row["path"], depth)
+        axis.annotate(
+            "", xy=(depth + 1.35, y), xytext=(-1.35, y),
+            arrowprops={"arrowstyle": "-|>", "color": arrow_blue,
+                        "linewidth": 0.9, "mutation_scale": 7},
+            zorder=0,
+        )
+        axis.add_patch(FancyBboxPatch(
+            (-1.72, y - 0.28), 0.62, 0.56,
+            boxstyle="round,pad=0.03,rounding_size=0.12",
+            facecolor=input_blue, edgecolor=navy, linewidth=1.1, zorder=2,
+        ))
+        axis.text(-1.41, y, "x", ha="center", va="center", fontsize=8,
+                  color=navy, fontweight="bold", zorder=3)
+        axis.add_patch(FancyBboxPatch(
+            (depth + 1.08, y - 0.28), 0.72, 0.56,
+            boxstyle="round,pad=0.03,rounding_size=0.12",
+            facecolor=output_orange, edgecolor=navy, linewidth=1.1, zorder=2,
+        ))
+        axis.text(depth + 1.44, y, "out", ha="center", va="center",
+                  fontsize=8, color=navy, fontweight="bold", zorder=3)
+
+        for layer, count in enumerate(counts):
+            skipped = count == 0
+            repeated = count > 1
+            cell = FancyBboxPatch(
+                (layer - cell_width / 2, y - cell_height / 2),
+                cell_width, cell_height,
+                boxstyle="round,pad=0.01,rounding_size=0.07",
+                facecolor=recurrent_green if repeated else "white",
+                edgecolor=skipped_gray if skipped else navy,
+                linewidth=0.85 if skipped else 1.0,
+                linestyle=(0, (3, 2)) if skipped else "solid",
+                zorder=2,
+            )
+            axis.add_patch(cell)
+            if repeated:
+                axis.text(layer, y, f"×{count}", ha="center", va="center",
+                          fontsize=8, color=navy, fontweight="bold", zorder=3)
+
     axis.set_xticks(range(depth))
-    axis.set_xticklabels(range(depth), fontsize=6)
+    axis.set_xticklabels(range(depth), fontsize=8)
     labels = []
     for row in rows:
         verdict = "C" if row["correct"] else "W"
         labels.append(f"{verdict}  {row['candidate_id']}  len={row['length']}  "
                       f"found={row['evaluation_index'] + 1}")
-    axis.set_yticks(range(len(rows)))
-    axis.set_yticklabels(labels, fontsize=7)
-    axis.set_xlabel("Original transformer layer (gray=skip, blue=once, orange=loop)")
+    axis.set_yticks(row_positions)
+    row_labels = axis.set_yticklabels(labels, fontsize=8)
+    axis.set_xlabel("Frozen pretrained layer index")
     axis.set_title(title)
     split = sum(row["correct"] for row in rows)
     if 0 < split < len(rows):
-        axis.axhline(split - 0.5, color="black", linewidth=1.2)
-    for index, row in enumerate(rows):
-        color = "#009E73" if row["correct"] else "#CC3311"
-        axis.get_yticklabels()[index].set_color(color)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pending = path.with_suffix(path.suffix + ".pending")
-    fig.savefig(pending, format="png", dpi=180)
-    with pending.open("rb") as stream:
-        os.fsync(stream.fileno())
-    os.replace(pending, path)
+        separator = len(rows) - split - 0.5
+        axis.axhline(separator, color=navy, linewidth=1.0, linestyle=(0, (5, 3)))
+    for row_label, row in zip(row_labels, rows):
+        color = correct_green if row["correct"] else wrong_red
+        row_label.set_color(color)
+    axis.set_xlim(-2.0, depth + 2.05)
+    axis.set_ylim(-0.75, len(rows) - 0.25)
+    axis.tick_params(axis="both", length=0)
+    for spine in axis.spines.values():
+        spine.set_visible(False)
+    axis.legend(
+        handles=[
+            Patch(facecolor="white", edgecolor=navy, label="Keep (execute once)"),
+            Patch(facecolor="white", edgecolor=skipped_gray, linestyle=(0, (3, 2)),
+                  label="Skip"),
+            Patch(facecolor=recurrent_green, edgecolor=navy,
+                  label="Recurrent (×n executions)"),
+            Line2D([0], [0], color=correct_green, linewidth=2, label="C: correct"),
+            Line2D([0], [0], color=wrong_red, linewidth=2, label="W: wrong"),
+        ],
+        loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=5,
+        frameon=False, fontsize=8,
+    )
+
+    stem = path.with_suffix("")
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    for suffix, figure_format in ((".png", "png"), (".svg", "svg"), (".pdf", "pdf")):
+        target = stem.with_suffix(suffix)
+        pending = target.with_suffix(target.suffix + ".pending")
+        save_options = {"dpi": 180} if figure_format == "png" else {}
+        fig.savefig(pending, format=figure_format, **save_options)
+        with pending.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(pending, target)
     plt.close(fig)
 
 
@@ -100,6 +174,8 @@ def build_report(args):
                 f"status={question_state['status']}"
             )
         results = question_state["results"]
+        if not results:
+            raise ValueError(f"DM-{key} has no evaluated paths to visualize")
         correct_count = sum(row["correct"] for row in results)
         error_count = len(results) - correct_count
         required_count = 2 * args.paths_per_label
@@ -110,8 +186,6 @@ def build_report(args):
             )
         simple = _select(results, largest=False, count=args.paths_per_label)
         complex_rows = _select(results, largest=True, count=args.paths_per_label)
-        if not results:
-            raise ValueError(f"DM-{key} has no evaluated paths to visualize")
         figure_dir = folder / "figures"
         _save_figure(figure_dir / f"dm{key}_simplest.png", simple, config["depth"],
                      f"DM-{key}: simplest correct and wrong paths")

@@ -59,9 +59,9 @@ python -B ./Polar_code/run_path_showcase.py report \
   --paths-per-label 10
 ```
 
-输出：`./Polar_data/runs/qwen3_path_showcase/path_showcase/figures/` 中每个难度两张 PNG，以及同目录下的 `summary.md`、`report.json`、`report.csv` 和 `path_selections.json`。最后一个文件保留首批发现、最简单及最复杂集合的完整路径、模型原始输出和抽取答案。
+输出：`./Polar_data/runs/qwen3_path_showcase/path_showcase/figures/` 中每个难度两张图，每张同时提供 PNG、SVG 和 PDF，以及同目录下的 `summary.md`、`report.json`、`report.csv` 和 `path_selections.json`。最后一个文件保留首批发现、最简单及最复杂集合的完整路径、模型原始输出和抽取答案。
 
-图中灰色表示跳过，蓝色表示执行一次，橙色表示 loop；绿色行名为正确路径，红色行名为错误路径。纵轴同时标出候选编号、路径长度和发现顺序。
+图的视觉语义沿用原项目 `search_space.png`：蓝色输入、橙色输出、白色实线层表示执行一次、灰色虚线层表示 skip、浅绿色层及 `×n` 表示 recurrence。绿色 C 行名为正确路径，红色 W 行名为错误路径；纵轴同时标出候选编号、路径长度和发现顺序。
 
 搜索尚未全部结束时，可以在另一个终端只生成已经完成难度的图片。例如 DM-1 已完成而 DM-2 正在搜索时执行：
 
@@ -72,7 +72,7 @@ python -B ./Polar_code/run_path_showcase.py report \
   --difficulties 1
 ```
 
-这只读取一次原子保存的状态快照，不加载模型，也不会打断 MCTS。局部报告基于当前已有结果：每类不足 10 条时有多少画多少，不足 20 条时允许“最简单”和“最复杂”集合重合，并在报告中给出重合数。图片仍写入 `figures/dm1_*.png`；局部汇总使用 `summary_dm1.md`、`report_dm1.json`、`report_dm1.csv` 和 `path_selections_dm1.json`，不会覆盖最终五难度汇总。
+这只读取一次原子保存的状态快照，不加载模型，也不会打断 MCTS。局部报告基于当前已有结果：每类不足 10 条时有多少画多少，不足 20 条时允许“最简单”和“最复杂”集合重合，并在报告中给出重合数。图仍写入 `figures/dm1_*`，每张都有 PNG、SVG 和 PDF；局部汇总使用 `summary_dm1.md`、`report_dm1.json`、`report_dm1.csv` 和 `path_selections_dm1.json`，不会覆盖最终五难度汇总。
 
 ## 一键运行
 
