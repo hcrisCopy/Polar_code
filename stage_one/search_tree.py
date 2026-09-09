@@ -38,12 +38,14 @@ def edits(path, *, max_block, max_repeats, max_length):
 
 
 def search(evaluate, *, depth, simulations, exploration, length_penalty,
-           max_block, max_repeats, max_length, seed, rank, on_evaluation):
+           max_block, max_repeats, max_length, seed, rank, on_evaluation,
+           should_stop=None):
     """Evaluate each unique program once; backpropagate binary reward only.
 
     Revisited states use their actual recorded reward. Ancestor states are
     excluded to prevent edit cycles; states reached by other branches may share
-    the reward cache but retain local tree visit statistics.
+    the reward cache but retain local tree visit statistics. ``should_stop`` is
+    an optional post-simulation callback; omitting it preserves full MCTS runs.
     """
     rng = random.Random(seed)
     root = Node(tuple(range(depth)))
@@ -63,6 +65,7 @@ def search(evaluate, *, depth, simulations, exploration, length_penalty,
         return result
 
     initial = score(root.path)
+    stopped_early = False
     for _ in tqdm(range(simulations), desc=f"rank {rank} MCTS", position=2 * rank + 1,
                   leave=False, mininterval=2):
         node = root
@@ -70,9 +73,15 @@ def search(evaluate, *, depth, simulations, exploration, length_penalty,
         ancestors = {node.path}
         while True:
             if node.unexpanded is None:
-                node.unexpanded = [p for p in edits(
-                    node.path, max_block=max_block, max_repeats=max_repeats,
-                    max_length=max_length) if p not in ancestors]
+                node.unexpanded = [
+                    candidate for candidate in edits(
+                        node.path,
+                        max_block=max_block,
+                        max_repeats=max_repeats,
+                        max_length=max_length,
+                    )
+                    if candidate not in ancestors
+                ]
                 rng.shuffle(node.unexpanded)
             if node.unexpanded:
                 node = Node(node.unexpanded.pop())
@@ -81,21 +90,38 @@ def search(evaluate, *, depth, simulations, exploration, length_penalty,
                 break
             if not node.children:
                 break
+
             # V is the total simulations so far, as defined in Appendix B.3.
             def ucb(child):
-                return (child.total_reward / child.visits
-                        + exploration * math.sqrt(math.log(max(1, root.visits)) / child.visits)
-                        - length_penalty * len(child.path) / depth)
+                return (
+                    child.total_reward / child.visits
+                    + exploration
+                    * math.sqrt(math.log(max(1, root.visits)) / child.visits)
+                    - length_penalty * len(child.path) / depth
+                )
+
             values = [ucb(child) for child in node.children]
             best = max(values)
-            node = rng.choice([child for child, value in zip(node.children, values) if value == best])
+            node = rng.choice([
+                child for child, value in zip(node.children, values) if value == best
+            ])
             chain.append(node)
             ancestors.add(node.path)
+
         reward = score(node.path)
         for visited in chain:
             visited.visits += 1
             visited.total_reward += reward
+        if should_stop is not None and should_stop(
+                unique_evaluations=len(scores), simulations_completed=root.visits):
+            stopped_early = True
+            break
 
-    return {"initial_score": initial, "simulations_completed": root.visits,
-            "unique_evaluations": len(scores), "cache_hits": cache_hits,
-            "root_cumulative_reward": root.total_reward}
+    return {
+        "initial_score": initial,
+        "simulations_completed": root.visits,
+        "unique_evaluations": len(scores),
+        "cache_hits": cache_hits,
+        "root_cumulative_reward": root.total_reward,
+        "stopped_early": stopped_early,
+    }

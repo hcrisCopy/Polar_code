@@ -1,9 +1,10 @@
-"""Qwen3 non-thinking generation and batched DART-Math answer judging."""
+"""Qwen3 non-thinking generation and bounded DART-Math answer judging."""
 
 import contextlib
 import hashlib
 import json
 import random
+import signal
 from types import SimpleNamespace
 
 from stage_one.model_runner import install_execution_cache
@@ -81,18 +82,32 @@ class ShowcaseModelRunner:
             raise RuntimeError("Qwen3 emitted a thinking trace despite enable_thinking=False")
         return answer.strip()
 
-    def judge_batch(self, generated_texts, ground_truth):
-        """Judge one search batch in one multiprocessing call, not once per path."""
-        valid_indices = [index for index, text in enumerate(generated_texts)
-                         if "oxed{" in text]
-        results = [("", False) for _ in generated_texts]
-        if not valid_indices:
-            return results
-        samples = [SimpleNamespace(resp=generated_texts[index], ref_ans=ground_truth,
-                                   ans=None, query="", dataset="math")
-                   for index in valid_indices]
-        with contextlib.redirect_stdout(self.log_stream), contextlib.redirect_stderr(self.log_stream):
-            extracted, correct = self.evaluator.batch_eval(samples, n_procs=4)
-        for index, answer, score in zip(valid_indices, extracted, correct):
-            results[index] = ("" if answer is None else str(answer), bool(score))
-        return results
+    def judge(self, generated_text, ground_truth):
+        """Run the same DART-Math extractor/equivalence logic with a hard timeout."""
+        if "oxed{" not in generated_text:
+            return "", False
+
+        class JudgingTimeout(TimeoutError):
+            pass
+
+        def timeout_handler(signum, frame):
+            del signum, frame
+            raise JudgingTimeout("DART-Math judging exceeded 60 seconds")
+
+        previous = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, 60)
+        try:
+            with contextlib.redirect_stdout(self.log_stream), \
+                    contextlib.redirect_stderr(self.log_stream):
+                extracted = self.evaluator.extract_ans(generated_text)
+                sample = SimpleNamespace(resp=generated_text, ref_ans=ground_truth,
+                                         ans=extracted, query="", dataset="math")
+                correct = self.evaluator.eval(sample)
+            return "" if extracted is None else str(extracted), bool(correct)
+        except Exception as exc:
+            print(f"Judge failure treated as incorrect: {type(exc).__name__}: {exc}",
+                  file=self.log_stream)
+            return "", False
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)

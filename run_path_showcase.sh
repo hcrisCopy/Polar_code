@@ -19,10 +19,14 @@ python -B ./Polar_code/run_path_showcase.py search \
   --model-revision local-snapshot \
   --device 0 \
   --seed 42 \
-  --candidate-limit 1024 \
-  --batch-size 32 \
+  --simulations 1024 \
+  --check-interval 32 \
+  --max-question-seconds 600 \
   --target-per-label 20 \
+  --exploration 1.4142135623730951 \
+  --length-penalty 0.1 \
   --max-block 4 \
+  --max-repeats 4 \
   --max-length-factor 1.15 \
   --max-new-tokens 50 \
   --temperature 0

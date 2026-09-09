@@ -1,4 +1,4 @@
-"""Incremental 32-path search with per-generation crash recovery."""
+"""Stage-one MCTS with quota checks every 32 newly evaluated paths."""
 
 from pathlib import Path
 import time
@@ -6,9 +6,9 @@ import time
 from tqdm import tqdm
 
 from polar.config import infer_original_depth
+from stage_one.search_tree import search as mcts_search
 from stage_one.storage import file_digest
 
-from .candidates import generate_candidate_pool
 from .model_runner import ShowcaseModelRunner
 from .storage import atomic_json, digest, read_json, run_dir
 
@@ -18,8 +18,7 @@ def _counts(results):
             sum(not row["correct"] for row in results))
 
 
-def _light_model_inventory(model_path):
-    """Validate a local snapshot without hashing every multi-GB weight shard."""
+def _model_inventory(model_path):
     path = Path(model_path)
     required = [path / "config.json", path / "tokenizer_config.json"]
     if not all(item.is_file() for item in required):
@@ -32,11 +31,15 @@ def _light_model_inventory(model_path):
         with item.open("rb") as stream:
             if stream.read(80).startswith(b"version https://git-lfs.github.com/spec/"):
                 raise ValueError(f"Weight is only a Git LFS pointer: {item}")
-    return {"verified_small_files": [
-                {"file": item.name, "bytes": item.stat().st_size,
-                 "sha256": file_digest(item)} for item in required],
-            "weight_files": [
-                {"file": item.name, "bytes": item.stat().st_size} for item in weights]}
+    return {
+        "verified_small_files": [
+            {"file": item.name, "bytes": item.stat().st_size,
+             "sha256": file_digest(item)} for item in required
+        ],
+        "weight_files": [
+            {"file": item.name, "bytes": item.stat().st_size} for item in weights
+        ],
+    }
 
 
 def _config(args, manifest):
@@ -46,20 +49,121 @@ def _config(args, manifest):
         raise ValueError("Local model config does not match Qwen3-8B depth")
     if local_config.get("quantization_config"):
         raise ValueError("This checkpoint requires the full, unquantized model")
-    return {"schema_version": 1, "model_id": args.model_id,
-            "model_path": args.model_path, "model_revision": args.model_revision,
-            "model_files": _light_model_inventory(args.model_path),
-            "manifest_id": manifest["manifest_id"],
-            "seed": args.seed, "candidate_limit": args.candidate_limit,
-            "batch_size": args.batch_size, "target_per_label": args.target_per_label,
-            "max_block": args.max_block, "max_length_factor": args.max_length_factor,
-            "max_new_tokens": args.max_new_tokens, "temperature": args.temperature,
-            "depth": depth, "max_length": int(depth * args.max_length_factor)}
+    return {
+        "schema_version": 2,
+        "search_method": "stage_one MCTS",
+        "model_id": args.model_id,
+        "model_path": args.model_path,
+        "model_revision": args.model_revision,
+        "model_files": _model_inventory(args.model_path),
+        "manifest_id": manifest["manifest_id"],
+        "seed": args.seed,
+        "simulations": args.simulations,
+        "check_interval": args.check_interval,
+        "max_question_seconds": args.max_question_seconds,
+        "target_per_label": args.target_per_label,
+        "exploration": args.exploration,
+        "length_penalty": args.length_penalty,
+        "max_block": args.max_block,
+        "max_repeats": args.max_repeats,
+        "max_length_factor": args.max_length_factor,
+        "max_new_tokens": args.max_new_tokens,
+        "temperature": args.temperature,
+        "depth": depth,
+        "max_length": int(depth * args.max_length_factor),
+    }
 
 
 def _new_question_state(row):
-    return {"sample_id": row["sample_id"], "difficulty": row["difficulty"],
-            "results": [], "pending_batch": [], "status": "pending"}
+    return {
+        "sample_id": row["sample_id"],
+        "difficulty": row["difficulty"],
+        "results": [],
+        "status": "pending",
+        "search_statistics": None,
+    }
+
+
+def _search_question(row, question_state, args, config, runner, state, state_path):
+    result_by_path = {tuple(item["path"]): item for item in question_state["results"]}
+    baseline = tuple(range(config["depth"]))
+    stop_reason = {"value": None}
+
+    def evaluate(path):
+        path_tuple = tuple(path)
+        cached = result_by_path.get(path_tuple)
+        if cached is not None:
+            return float(cached["correct"])
+
+        started = time.monotonic()
+        generated = runner.generate(row["question"], row["sample_id"], path)
+        extracted, correct = runner.judge(generated, row["gt_ans"])
+        item = {
+            "candidate_id": f"mcts_{len(question_state['results']):04d}",
+            "path": path,
+            "length": len(path),
+            "path_digest": digest(path),
+            "generated_text": generated,
+            "extracted_answer": extracted,
+            "correct": correct,
+            "generation_seconds": time.monotonic() - started,
+            "evaluation_index": len(question_state["results"]),
+        }
+        question_state["results"].append(item)
+        result_by_path[path_tuple] = item
+        atomic_json(state_path, state)
+        return float(correct)
+
+    def should_stop(*, unique_evaluations, simulations_completed):
+        del simulations_completed
+        consumed = sum(
+            item.get("generation_seconds", 0.0) for item in question_state["results"]
+        )
+        if consumed >= args.max_question_seconds:
+            stop_reason["value"] = "time_limit_reached"
+            print(
+                f"DM-{row['difficulty']}: stop after {consumed:.1f}s cumulative "
+                "generation/judging time"
+            )
+            return True
+        # The root baseline is evaluated outside the N MCTS simulations.
+        new_path_count = unique_evaluations - 1
+        if new_path_count <= 0 or new_path_count % args.check_interval:
+            return False
+        replayed_results = question_state["results"][:unique_evaluations]
+        correct_count, error_count = _counts(replayed_results)
+        print(
+            f"DM-{row['difficulty']}: MCTS new_paths={new_path_count}, "
+            f"correct={correct_count}, error={error_count}"
+        )
+        reached = min(correct_count, error_count) >= args.target_per_label
+        if reached:
+            stop_reason["value"] = "quota_reached"
+        return reached
+
+    sample_seed = int(digest([args.seed, row["sample_id"]])[:16], 16)
+    statistics = mcts_search(
+        evaluate,
+        depth=config["depth"],
+        simulations=args.simulations,
+        exploration=args.exploration,
+        length_penalty=args.length_penalty,
+        max_block=args.max_block,
+        max_repeats=args.max_repeats,
+        max_length=config["max_length"],
+        seed=sample_seed,
+        rank=0,
+        on_evaluation=lambda path, reward: None,
+        should_stop=should_stop,
+    )
+    question_state["search_statistics"] = statistics
+    correct_count, error_count = _counts(question_state["results"])
+    question_state["status"] = stop_reason["value"] or (
+        "quota_reached" if min(correct_count, error_count) >= args.target_per_label
+        else "simulation_limit_reached"
+    )
+    question_state["baseline_correct"] = result_by_path[baseline]["correct"]
+    atomic_json(state_path, state)
 
 
 def run_search(args):
@@ -69,22 +173,11 @@ def run_search(args):
     config["config_id"] = digest(config)
     config_path = folder / "search_config.json"
     if config_path.exists() and read_json(config_path) != config:
-        raise ValueError("Search configuration changed; use a new run-name or --clean")
+        raise ValueError(
+            "Search configuration changed; use a new run-name or prepare --clean"
+        )
     if not config_path.exists():
         atomic_json(config_path, config)
-
-    pools = {}
-    for row in manifest["questions"]:
-        pools[str(row["difficulty"])] = generate_candidate_pool(
-            depth=config["depth"], maximum=args.candidate_limit,
-            seed=int(digest([args.seed, row["sample_id"]])[:16], 16),
-            max_block=args.max_block, max_length=config["max_length"])
-    pool_payload = {"config_id": config["config_id"], "by_difficulty": pools}
-    pool_path = folder / "candidate_pools.json"
-    if pool_path.exists() and read_json(pool_path) != pool_payload:
-        raise ValueError("Candidate pool changed; use a new run-name or --clean")
-    if not pool_path.exists():
-        atomic_json(pool_path, pool_payload)
 
     state_path = folder / "search_state.json"
     if state_path.exists():
@@ -92,9 +185,13 @@ def run_search(args):
         if state["config_id"] != config["config_id"]:
             raise ValueError("Search state belongs to another configuration")
     else:
-        state = {"config_id": config["config_id"], "questions": {
-            str(row["difficulty"]): _new_question_state(row)
-            for row in manifest["questions"]}}
+        state = {
+            "config_id": config["config_id"],
+            "questions": {
+                str(row["difficulty"]): _new_question_state(row)
+                for row in manifest["questions"]
+            },
+        }
         atomic_json(state_path, state)
 
     log_path = folder / "model.log"
@@ -102,56 +199,17 @@ def run_search(args):
         runner = ShowcaseModelRunner(args, log_stream)
         try:
             if runner.depth != config["depth"]:
-                raise ValueError("Loaded model depth differs from configured Qwen3-8B depth")
+                raise ValueError("Loaded model depth differs from Qwen3-8B depth")
             atomic_json(folder / "model_runtime.json", runner.metadata())
             for row in tqdm(manifest["questions"], desc="Difficulty questions"):
-                key = str(row["difficulty"])
-                question_state = state["questions"][key]
-                if question_state["status"] in {"quota_reached", "candidate_limit_reached"}:
+                question_state = state["questions"][str(row["difficulty"])]
+                if question_state["status"] in {
+                    "quota_reached", "simulation_limit_reached", "time_limit_reached"
+                }:
                     continue
-                pool = pools[key]
-                while True:
-                    correct_count, error_count = _counts(question_state["results"])
-                    if min(correct_count, error_count) >= args.target_per_label:
-                        question_state["status"] = "quota_reached"
-                        break
-                    completed_ids = {item["candidate_id"] for item in question_state["results"]}
-                    pending_ids = {item["candidate_id"] for item in question_state["pending_batch"]}
-                    if not question_state["pending_batch"]:
-                        remaining = [item for item in pool if item["candidate_id"] not in completed_ids]
-                        question_state["pending_batch"] = [
-                            {**item, "generated_text": None, "generation_seconds": None}
-                            for item in remaining[:args.batch_size]
-                        ]
-                        atomic_json(state_path, state)
-                    if not question_state["pending_batch"]:
-                        question_state["status"] = "candidate_limit_reached"
-                        break
-
-                    for item in tqdm(question_state["pending_batch"],
-                                     desc=f"DM-{key} generate batch", leave=False):
-                        if item["candidate_id"] in pending_ids and item["generated_text"] is not None:
-                            continue
-                        started = time.monotonic()
-                        item["generated_text"] = runner.generate(
-                            row["question"], row["sample_id"], item["path"])
-                        item["generation_seconds"] = time.monotonic() - started
-                        atomic_json(state_path, state)
-
-                    judged = runner.judge_batch(
-                        [item["generated_text"] for item in question_state["pending_batch"]],
-                        row["gt_ans"])
-                    for item, (extracted, correct) in zip(question_state["pending_batch"], judged):
-                        question_state["results"].append({
-                            **item, "extracted_answer": extracted, "correct": correct,
-                            "evaluation_index": len(question_state["results"])
-                        })
-                    question_state["pending_batch"] = []
-                    correct_count, error_count = _counts(question_state["results"])
-                    print(f"DM-{key}: evaluated={len(question_state['results'])}, "
-                          f"correct={correct_count}, error={error_count}")
-                    atomic_json(state_path, state)
-                atomic_json(state_path, state)
+                _search_question(
+                    row, question_state, args, config, runner, state, state_path
+                )
         finally:
             runner.close()
     return state

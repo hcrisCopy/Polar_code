@@ -1,10 +1,10 @@
 # 前 10 条正确/错误路径展示
 
-本流程只完成老师标绿的第一个汇报点：Qwen3-8B-Instruct 关闭思考模式，DART-Math 五个难度各确定性抽一题；每题最多准备 1,024 条候选路径，先评估 32 条，此后每次增加 32 条，得到至少 20 条正确和 20 条错误路径后立即停止。复杂度暂按路径长度衡量，每题输出“最简单 10 条”和“最复杂 10 条”两张图，两组路径严格不重合。
+本流程只完成老师标绿的第一个汇报点：Qwen3-8B-Instruct 关闭思考模式，DART-Math 五个难度各确定性抽一题；每题使用 `stage_one.search_tree.search` 运行最多 1,024 次 MCTS simulation。每新评估 32 条唯一路径检查一次，得到至少 20 条正确和 20 条错误路径后立即停止。复杂度暂按路径长度衡量，每题输出“最简单 10 条”和“最复杂 10 条”两张图，两组路径严格不重合。
 
 这里沿用模型发布名 `Qwen/Qwen3-8B`；它通过 chat template 的 `enable_thinking=False` 作为 instruct 非推理模式运行。
 
-这不是全量实验，也不声称复现论文 MCTS。候选顺序混合单次局部 skip/loop 与 2–6 次编辑的路径，比当前仓库中从根节点巨大动作集随机弹出候选更适合快速凑齐正负样本。路径块长不超过 4，最长执行深度为原模型的 115%。
+这不是全量实验。搜索直接复用当前仓库 `stage_one` 的 MCTS：从完整层路径出发，以 UCB 选择节点，通过连续块 skip/repeat 扩展并回传二值正确性 reward。论文没有公开全部搜索超参数，因此 UCB 系数、长度惩罚和 1,024 次上限仍是本项目配置。路径块长和重复次数不超过 4，最长执行深度为原模型的 115%。
 
 所有命令在同时包含 `./Polar_code` 和 `./Polar_data` 的远程服务器目录执行，先进入已有环境：
 
@@ -36,16 +36,20 @@ CUDA_VISIBLE_DEVICES=0 python -B ./Polar_code/run_path_showcase.py search \
   --model-revision local-snapshot \
   --device 0 \
   --seed 42 \
-  --candidate-limit 1024 \
-  --batch-size 32 \
+  --simulations 1024 \
+  --check-interval 32 \
+  --max-question-seconds 600 \
   --target-per-label 20 \
+  --exploration 1.4142135623730951 \
+  --length-penalty 0.1 \
   --max-block 4 \
+  --max-repeats 4 \
   --max-length-factor 1.15 \
   --max-new-tokens 50 \
   --temperature 0
 ```
 
-输出：`./Polar_data/runs/qwen3_path_showcase/path_showcase/search_state.json`。每生成一条路径就原子保存，中断后原命令重跑即可继续；不要加 `--clean`。每 32 条集中调用一次数学判分，避免每条路径重复创建判分进程。
+输出：`./Polar_data/runs/qwen3_path_showcase/path_showcase/search_state.json`。每评估一条路径就原子保存。中断后原命令会用同一随机种子快速重放 MCTS 树；已见路径直接读取正确性缓存，不重复运行模型，然后从断点之后继续。MCTS 的下一步依赖上一条路径的 reward，因此路径必须依次判分；代码复用同一个判分器并设置 60 秒单次判分上限。每题累计模型生成与判分最多 600 秒，超时会保存 `time_limit_reached`，防止为了追满 1,024 次而卡数小时。
 
 ## 3. 生成图片
 

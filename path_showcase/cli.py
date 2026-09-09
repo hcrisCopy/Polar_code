@@ -28,10 +28,14 @@ def build_parser():
             command.add_argument("--model-revision", required=True)
             command.add_argument("--device", type=int, required=True)
             command.add_argument("--seed", type=int, required=True)
-            command.add_argument("--candidate-limit", type=int, required=True)
-            command.add_argument("--batch-size", type=int, required=True)
+            command.add_argument("--simulations", type=int, required=True)
+            command.add_argument("--check-interval", type=int, required=True)
+            command.add_argument("--max-question-seconds", type=int, required=True)
             command.add_argument("--target-per-label", type=int, required=True)
+            command.add_argument("--exploration", type=float, required=True)
+            command.add_argument("--length-penalty", type=float, required=True)
             command.add_argument("--max-block", type=int, required=True)
+            command.add_argument("--max-repeats", type=int, required=True)
             command.add_argument("--max-length-factor", type=float, required=True)
             command.add_argument("--max-new-tokens", type=int, required=True)
             command.add_argument("--temperature", type=float, required=True)
@@ -48,13 +52,17 @@ def validate(args):
         args.difficulties = sorted(set(args.difficulties))
     elif args.stage == "search":
         relative_path(args.model_path)
-        if min(args.candidate_limit, args.batch_size, args.target_per_label,
-               args.max_block, args.max_new_tokens) <= 0:
+        if min(args.simulations, args.check_interval, args.max_question_seconds,
+               args.target_per_label,
+               args.max_block, args.max_repeats, args.max_new_tokens) <= 0:
             raise ValueError("Search limits must be positive")
-        if args.candidate_limit < args.batch_size:
-            raise ValueError("candidate-limit must be at least batch-size")
-        if args.max_block > 4:
-            raise ValueError("Paper search constraint requires max-block <= 4")
+        if args.simulations < args.check_interval:
+            raise ValueError("simulations must be at least check-interval")
+        if args.max_block > 4 or args.max_repeats > 4:
+            raise ValueError("Paper search constraints require max-block/max-repeats <= 4")
+        if any(not math.isfinite(value) or value < 0 for value in
+               (args.exploration, args.length_penalty)):
+            raise ValueError("MCTS coefficients must be finite and nonnegative")
         if (not math.isfinite(args.max_length_factor)
                 or args.max_length_factor < 1.0):
             raise ValueError("max-length-factor must be finite and >= 1")
