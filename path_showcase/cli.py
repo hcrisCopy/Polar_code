@@ -41,6 +41,10 @@ def build_parser():
             command.add_argument("--temperature", type=float, required=True)
         else:
             command.add_argument("--paths-per-label", type=int, required=True)
+            command.add_argument(
+                "--difficulties", nargs="+", type=int, choices=range(1, 6),
+                help="Render only completed selected difficulties; omit for all five",
+            )
     return parser
 
 
@@ -68,8 +72,11 @@ def validate(args):
             raise ValueError("max-length-factor must be finite and >= 1")
         if not math.isfinite(args.temperature) or args.temperature != 0:
             raise ValueError("This checkpoint requires Qwen3 non-thinking greedy inference")
-    elif args.paths_per_label <= 0:
-        raise ValueError("paths-per-label must be positive")
+    elif args.stage == "report":
+        if args.paths_per_label <= 0:
+            raise ValueError("paths-per-label must be positive")
+        if args.difficulties is not None:
+            args.difficulties = sorted(set(args.difficulties))
 
 
 def main():

@@ -81,9 +81,23 @@ def build_report(args):
             "at least twice paths-per-label"
         )
     question_by_diff = {str(row["difficulty"]): row for row in manifest["questions"]}
+    selected_difficulties = (
+        [str(value) for value in args.difficulties]
+        if args.difficulties is not None
+        else sorted(state["questions"], key=int)
+    )
+    missing = [key for key in selected_difficulties if key not in state["questions"]]
+    if missing:
+        raise ValueError(f"Difficulties absent from this run: {missing}")
     report_rows = []
     selections = {}
-    for key, question_state in tqdm(state["questions"].items(), desc="Render path figures"):
+    for key in tqdm(selected_difficulties, desc="Render path figures"):
+        question_state = state["questions"][key]
+        if question_state["status"] != "quota_reached":
+            raise ValueError(
+                f"DM-{key} is not ready for visualization: "
+                f"status={question_state['status']}"
+            )
         results = question_state["results"]
         correct_count = sum(row["correct"] for row in results)
         error_count = len(results) - correct_count
@@ -125,14 +139,17 @@ def build_report(args):
                             "question": question_by_diff[key]["question"],
                             "ground_truth": question_by_diff[key]["gt_ans"]})
 
+    suffix = "" if args.difficulties is None else "_dm" + "-".join(selected_difficulties)
     summary = {"schema_version": 1, "run_name": args.run_name,
+               "reported_difficulties": [int(key) for key in selected_difficulties],
+               "partial_report": args.difficulties is not None,
                "complexity_metric": "execution path length",
                "paths_per_label_per_figure": args.paths_per_label,
                "simplest_and_most_complex_sets_disjoint": True,
                "questions": report_rows}
-    atomic_json(folder / "report.json", summary)
-    atomic_json(folder / "path_selections.json", selections)
-    csv_path = folder / "report.csv"
+    atomic_json(folder / f"report{suffix}.json", summary)
+    atomic_json(folder / f"path_selections{suffix}.json", selections)
+    csv_path = folder / f"report{suffix}.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     pending = csv_path.with_suffix(".csv.pending")
     with pending.open("w", encoding="utf-8", newline="") as stream:
@@ -150,6 +167,7 @@ def build_report(args):
         lines.append(f"| DM-{row['difficulty']} | {row['evaluated']} | {row['correct']} | "
                      f"{row['wrong']} | {row['status']} | {row['simple_complex_overlap']} |")
     lines.extend(["", "每类至少收集 20 条；最简单 10 条与最复杂 10 条严格不重合。"])
-    atomic_text(folder / "summary.md", "\n".join(lines) + "\n")
-    print(f"Report written to {folder / 'summary.md'}")
+    summary_path = folder / f"summary{suffix}.md"
+    atomic_text(summary_path, "\n".join(lines) + "\n")
+    print(f"Report written to {summary_path}")
     return summary

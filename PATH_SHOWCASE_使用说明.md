@@ -63,6 +63,17 @@ python -B ./Polar_code/run_path_showcase.py report \
 
 图中灰色表示跳过，蓝色表示执行一次，橙色表示 loop；绿色行名为正确路径，红色行名为错误路径。纵轴同时标出候选编号、路径长度和发现顺序。
 
+搜索尚未全部结束时，可以在另一个终端只生成已经完成难度的图片。例如 DM-1 已完成而 DM-2 正在搜索时执行：
+
+```bash
+python -B ./Polar_code/run_path_showcase.py report \
+  --run-name qwen3_path_showcase \
+  --paths-per-label 10 \
+  --difficulties 1
+```
+
+这只读取一次原子保存的状态快照，不加载模型，也不会打断 MCTS。图片仍写入 `figures/dm1_*.png`；局部汇总使用 `summary_dm1.md`、`report_dm1.json`、`report_dm1.csv` 和 `path_selections_dm1.json`，不会覆盖最终五难度汇总。
+
 ## 一键运行
 
 首次运行：
