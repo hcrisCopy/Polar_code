@@ -70,9 +70,20 @@ class ShowcaseModelRunner:
                                 _qwen3_split_thinking)
 
         self._seed(sample_id, path)
+        if enable_thinking:
+            instruction = (
+                "Solve the following math problem. Reason through the problem first. "
+                "After the reasoning is complete, output ONLY the final answer, "
+                "formatted strictly as \\boxed{ANSWER}."
+            )
+        else:
+            # Keep the released PoLaR online-evaluation prompt unchanged.
+            instruction = (
+                "Solve the following math problem and output ONLY the final answer "
+                "directly, formatted strictly as \\boxed{ANSWER}."
+            )
         prompt = (
-            "Solve the following math problem and output ONLY the final answer directly, "
-            "formatted strictly as \\boxed{ANSWER}.\n"
+            f"{instruction}\n"
             "### Problem Start\n"
             f"{question}\n"
             "### Problem End\n"

@@ -85,7 +85,7 @@ python -B ./Polar_code/run_path_showcase.py report \
 
 ## 4. 对 DM-1 图中相同路径开启 Thinking 复评
 
-这一步不重新搜索，也不改变路径。它读取 `path_selections_dm1.json` 中两张图实际展示的 40 条不重复路径，使用同一模型、同一道题和同一判分器，只把 Qwen3 chat template 改为 `enable_thinking=True` 后逐条重新生成。
+这一步不重新搜索，也不改变路径。它读取 `path_selections_dm1.json` 中两张图实际展示的 40 条不重复路径，使用同一模型、同一道题和同一判分器，把 Qwen3 chat template 改为 `enable_thinking=True` 后逐条重新生成。Thinking 提示词要求模型先完成推理，再在推理之后只输出 boxed 最终答案，避免原 non-thinking 提示词中的“只输出答案”抑制思考；原搜索提示词保持不变。
 
 Thinking 复评使用 `max-new-tokens=2048` 作为安全上限，让模型通常依靠 EOS 自然结束，避免 50-token 上限干扰其真实行为。若异常轨迹仍达到上限且没有输出 boxed answer，结果记为 `truncated`，不误判为错误。
 
